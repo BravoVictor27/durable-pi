@@ -891,6 +891,28 @@ export class Store {
     return { items: page.items as unknown as WireEntry[], next: encodeCursor(page.next) };
   }
 
+  /** The whole session as one document: the summary plus every stored entry of every agent, oldest first. */
+  async exportSession(row: SessionRow, pageSize = 2000) {
+    const session = await this.sessionSummary(row);
+    const events: { agentId: number; name: string; entries: WireEntry[] }[] = [];
+    if (!session.error) {
+      const h = this.harness(row);
+      for (const agent of session.agents) {
+        const c = await h.conversation(agent.id as ConversationId, ctx);
+        if (!c) continue;
+        const entries: WireEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await this.entries(c, cursor, pageSize);
+          entries.push(...page.items);
+          cursor = page.next ?? undefined;
+        } while (cursor);
+        events.push({ agentId: agent.id, name: agent.name, entries: entries.reverse() });
+      }
+    }
+    return { exportedAt: new Date().toISOString(), session, events };
+  }
+
   async activeEntries(c: Conversation): Promise<WireEntry[]> {
     const view = await c.viewState(ctx);
     try {
