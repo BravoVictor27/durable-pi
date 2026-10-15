@@ -1,4 +1,6 @@
 // Slash commands. Anything that is not a known command goes to the agent as text, as in pi.
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { SlashCommand } from "@earendil-works/pi-tui";
 import { THINKING_LEVELS, type ThinkingLevel } from "../../dpi-sdk/src/api.ts";
 import type { App } from "./app.ts";
@@ -22,6 +24,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "compact", description: "summarize older context", argumentHint: "[instructions]" },
   { name: "reset", description: "start a fresh context", argumentHint: "[handoff note]" },
   { name: "name", description: "rename this agent", argumentHint: "<name>" },
+  { name: "save", description: "save this session to a JSON file", argumentHint: "[path]" },
   { name: "tasks", description: "live tasks in this session" },
   { name: "help", description: "keys and commands" },
   { name: "quit", description: "exit (the agent keeps running)" },
@@ -104,6 +107,23 @@ export async function runCommand(app: App, text: string): Promise<boolean> {
       await app.run(async () => {
         await handle!.rename(arg);
         app.flash(`Agent renamed to ${arg}`);
+      });
+      break;
+    case "save":
+      if (!app.sessionId) return app.flash("Pick a session first (/sessions).", true), true;
+      await app.run(async () => {
+        const id = app.sessionId!;
+        const doc = await app.client.session(id).export();
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const slug = (app.sessionSummary()?.name ?? id).replace(/[\s\\/:*?"<>|\x00-\x1f]+/g, "-").replace(/^-+|-+$/g, "");
+        const file = resolve(arg || `${slug || id}-${stamp}.json`);
+        try {
+          await writeFile(file, `${JSON.stringify(doc, null, 2)}\n`, { flag: "wx" });
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${file} already exists; nothing written`);
+          throw e;
+        }
+        app.flash(`Saved session to ${file}`);
       });
       break;
     case "tasks":
