@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { JobRunsDoc } from "../../dpi-sdk/src/jobs.js";
 import { DpiClient } from "../../dpi-sdk/src/client.js";
 import { DpiError } from "../../dpi-sdk/src/errors.js";
+import { writeFile } from "node:fs/promises";
 import { bootServer, faux, newToken, tempStore, until } from "./helpers.js";
 
 test("REST v1: auth, sessions, agents, messages, waits, idempotency, errors", async () => {
@@ -225,6 +226,68 @@ test("GET /v1/sessions/:s/export returns the session summary and its full event 
     assert.match(JSON.stringify(group.entries), /Echo: again/);
   } finally {
     await server.stop();
+    await t.cleanup();
+  }
+});
+
+test("GET /v1/sessions/:s/export exports every agent of a session, not only the first", async () => {
+  const t = await tempStore();
+  const token = newToken();
+  const server = await bootServer({ home: join(t.root, "home"), startDirs: t.work, token, name: "export-box" });
+  try {
+    const client = new DpiClient(server.base, token);
+    const s = await client.createSession({ name: "Many", cwd: t.work, model: faux });
+    const reviewer = await client.session(s.id).createAgent({ name: "reviewer" });
+    assert.equal((await client.agent(s.id, "main").send("from main", "followUp", "many-1", 15000)).status, "done");
+    assert.equal((await client.agent(s.id, "reviewer").send("from reviewer", "followUp", "many-2", 15000)).status, "done");
+
+    const res = await fetch(`${server.base}/v1/sessions/${s.id}/export`, { headers: { authorization: `Bearer ${token}` } });
+    const doc = (await res.json()) as { events: { agentId: number; entries: unknown[] }[] };
+    assert.equal(doc.events.length, 2);
+    assert.ok(doc.events.some((g) => g.agentId === reviewer.id));
+    const text = (id: number) => JSON.stringify(doc.events.find((g) => g.agentId === id)!.entries);
+    assert.match(text(1), /Echo: from main/);
+    assert.match(text(reviewer.id), /Echo: from reviewer/);
+  } finally {
+    await server.stop();
+    await t.cleanup();
+  }
+});
+
+test("exportSession of an unopenable session returns its summary with the error and events: []", async () => {
+  const t = await tempStore();
+  let store = await t.open();
+  try {
+    const row = await store.create({ name: "Broken", cwd: t.work, model: faux });
+    const dbPath = row.dbPath;
+    await store.close();
+    await writeFile(dbPath, "not a sqlite database");
+    store = await t.open();
+    const doc = await store.exportSession(store.resolveSession("Broken"));
+    assert.ok(doc.session.error, "the summary carries the open error");
+    assert.deepEqual(doc.events, []);
+    assert.equal(doc.session.id, row.id);
+  } finally {
+    await store.close();
+    await t.cleanup();
+  }
+});
+
+test("exportSession reads every page of an agent's history", async () => {
+  const t = await tempStore();
+  const store = await t.open();
+  try {
+    const session = await store.create({ name: "Paged", cwd: t.work, model: faux });
+    const { c } = await store.resolveAgent(session.id, "main");
+    for (let i = 0; i < 3; i++) assert.equal((await store.send(c, { content: `msg ${i}`, requestId: `page-${i}` })).status !== undefined, true);
+    const row = store.resolveSession("Paged");
+    await until(async () => (await store.exportSession(row)).events[0].entries.length >= 6, 15000, "three answers");
+    const whole = await store.exportSession(row);
+    const paged = await store.exportSession(row, 2);
+    assert.ok(whole.events[0].entries.length >= 6);
+    assert.deepEqual(paged.events[0].entries.map((e) => e.id), whole.events[0].entries.map((e) => e.id));
+  } finally {
+    await store.close();
     await t.cleanup();
   }
 });

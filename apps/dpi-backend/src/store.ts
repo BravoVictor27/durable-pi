@@ -892,7 +892,7 @@ export class Store {
   }
 
   /** The whole session as one document: the summary plus every stored entry of every agent, oldest first. */
-  async exportSession(row: SessionRow) {
+  async exportSession(row: SessionRow, pageSize = 2000) {
     const session = await this.sessionSummary(row);
     const events: { agentId: number; name: string; entries: WireEntry[] }[] = [];
     if (!session.error) {
@@ -903,7 +903,7 @@ export class Store {
         const entries: WireEntry[] = [];
         let cursor: string | undefined;
         do {
-          const page = await this.entries(c, cursor, 2000);
+          const page = await this.entries(c, cursor, pageSize);
           entries.push(...page.items);
           cursor = page.next ?? undefined;
         } while (cursor);
