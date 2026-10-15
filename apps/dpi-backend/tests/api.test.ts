@@ -177,3 +177,54 @@ test("REST v1: auth, sessions, agents, messages, waits, idempotency, errors", as
     await t.cleanup();
   }
 });
+
+test("GET /v1/sessions/:s/export of an unknown session is 404 not_found", async () => {
+  const t = await tempStore();
+  const token = newToken();
+  const server = await bootServer({ home: join(t.root, "home"), startDirs: t.work, token, name: "export-box" });
+  try {
+    const res = await fetch(`${server.base}/v1/sessions/nope/export`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 404);
+    assert.equal((await res.json()).error.code, "not_found");
+  } finally {
+    await server.stop();
+    await t.cleanup();
+  }
+});
+
+test("GET /v1/sessions/:s/export returns the session summary and its full event history as one JSON document", async () => {
+  const t = await tempStore();
+  const token = newToken();
+  const server = await bootServer({ home: join(t.root, "home"), startDirs: t.work, token, name: "export-box" });
+  try {
+    const client = new DpiClient(server.base, token);
+    const s = await client.createSession({ name: "Exported", cwd: t.work, model: faux });
+    const main = client.agent(s.id, "main");
+    assert.equal((await main.send("hello", "followUp", "export-1", 15000)).status, "done");
+    assert.equal((await main.send("again", "followUp", "export-2", 15000)).status, "done");
+
+    const before = Date.now();
+    const res = await fetch(`${server.base}/v1/sessions/${s.id}/export`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+    const doc = (await res.json()) as {
+      exportedAt: string;
+      session: { id: string; name: string; agents: { id: number }[] };
+      events: { agentId: number; entries: { id: number; kind: string }[] }[];
+    };
+    assert.ok(Date.parse(doc.exportedAt) >= before - 1000);
+    assert.deepEqual(doc.session, await client.session(s.id).get());
+    assert.deepEqual(doc.events.map((g) => g.agentId), doc.session.agents.map((a) => a.id));
+
+    const group = doc.events.find((g) => g.agentId === 1)!;
+    const stored = (await main.entries({ scope: "all" })).items;
+    assert.ok(group.entries.length >= 4, "both prompts and both answers are exported");
+    assert.equal(group.entries.length, stored.length, "every stored entry is exported");
+    assert.deepEqual(group.entries.map((e) => e.id), stored.map((e) => e.id).reverse(), "oldest first");
+    const ids = group.entries.map((e) => e.id);
+    assert.deepEqual(ids, [...ids].sort((x, y) => x - y), "ids ascend");
+    assert.match(JSON.stringify(group.entries), /Echo: again/);
+  } finally {
+    await server.stop();
+    await t.cleanup();
+  }
+});
