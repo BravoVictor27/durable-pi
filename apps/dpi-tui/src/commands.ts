@@ -115,7 +115,7 @@ export async function runCommand(app: App, text: string): Promise<boolean> {
         const id = app.sessionId!;
         const doc = await app.client.session(id).export();
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const slug = (app.sessionSummary()?.name ?? id).replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+        const slug = (app.sessionSummary()?.name ?? id).replace(/[\s\\/:*?"<>|\x00-\x1f]+/g, "-").replace(/^-+|-+$/g, "");
         const file = resolve(arg || `${slug || id}-${stamp}.json`);
         try {
           await writeFile(file, `${JSON.stringify(doc, null, 2)}\n`, { flag: "wx" });
