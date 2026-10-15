@@ -119,6 +119,13 @@ export interface SessionSummary {
   compaction?: CompactionSettings;
 }
 
+/** `GET /v1/sessions/:s/export`: the whole session as one document, each agent's entries oldest first. */
+export interface SessionExport {
+  exportedAt: string;
+  session: SessionSummary;
+  events: { agentId: number; name: string; entries: WireEntry[] }[];
+}
+
 /**
  * pi-durable's compaction policy. Above `contextWindow - reserveTokens` the next request waits for a summary;
  * `backgroundTokens` below that, a summary starts in the background (0 disables it).

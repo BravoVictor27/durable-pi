@@ -14,6 +14,7 @@ import type {
   Frame,
   Page,
   SendResult,
+  SessionExport,
   SessionSummary,
   TaskOutcome,
   WhenBusy,
@@ -181,6 +182,10 @@ export class SessionHandle {
   }
   abortTask(taskId: number) {
     return this.client.request<{ status: string }>("POST", `${this.base}/tasks/${taskId}/abort`, {});
+  }
+  /** The whole session as one document: the summary plus every stored entry of every agent. */
+  export() {
+    return this.client.request<SessionExport>("GET", `${this.base}/export`);
   }
   inspect() {
     return this.client.request<unknown>("GET", `${this.base}/inspect`);
